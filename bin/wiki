@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
-# dependencies = ["libzim"]
+# dependencies = ["libzim", "html-to-markdown"]
 # ///
 """Search and read the local ZIM wikis.
 
@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote, unquote
 
+import html_to_markdown
 from libzim.reader import Archive
 from libzim.search import Query, Searcher
 
@@ -150,10 +151,8 @@ def search(query, n):
 
 def markdown(ref):
     _, _, entry = lookup(ref)
-    return subprocess.run(
-        ["pandoc", "-f", "html", "-t", "gfm-raw_html", "--wrap=none", f"--lua-filter={ROOT / 'lib/strip.lua'}"],
-        input=bytes(entry.get_item().content), capture_output=True, check=True,
-    ).stdout.decode()
+    options = html_to_markdown.ConversionOptions(strip_tags=["a"], skip_images=True, compact_tables=True, extract_metadata=False)
+    return html_to_markdown.convert(bytes(entry.get_item().content).decode(errors="ignore"), options).content
 
 
 def sections(lines):

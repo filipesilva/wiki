@@ -2,7 +2,7 @@
 
 Local [Kiwix](https://kiwix.org) ZIM wikis, and a CLI to search and read them.
 
-Needs [uv](https://docs.astral.sh/uv/) and [pandoc](https://pandoc.org).
+Needs [uv](https://docs.astral.sh/uv/).
 
 - `wikis.txt`: the wikis to keep, as ZIM names without the build date. `*` matches any text, e.g. `devdocs_en_*`. An optional second column gives a short name for `bin/wiki`, e.g. `devdocs_*` names `devdocs_en_clojure` as `devdocs_clojure`. Start from the example with `cp wikis.example.txt wikis.txt`.
 - `sources.txt`: the [Kiwix download](https://download.kiwix.org/zim/) folder for each ZIM name prefix, e.g. `unix.stackexchange.com stack_exchange`. Use it to find names for your own `wikis.txt`. `bin/sources` regenerates it.
