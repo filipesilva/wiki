@@ -208,6 +208,8 @@ def find(wiki):
 
 def lookup(ref):
     """(name, archive, entry) for a <wiki>/<path> ref."""
+    if "/" not in ref:
+        sys.exit(f"refs look like <wiki>/<path>, e.g. wikipedia/{ref}, see: wiki search")
     wiki, path = ref.split("/", 1)
     name, archive = find(wiki)
     if not archive.has_entry_by_path(path):
@@ -382,8 +384,7 @@ def open_in_kiwix(ref):
 
 def main(args):
     n = None
-    if "-n" in args:
-        i = args.index("-n")
+    if "-n" in args and (i := args.index("-n")) + 1 < len(args) and args[i + 1].isdigit():
         n = int(args[i + 1])
         args = args[:i] + args[i + 2:]
     match args:
