@@ -1,0 +1,8 @@
+# Copy to wikis.txt and edit. ZIM names without the build date, * matches any text.
+# bin/update finds each one's Kiwix folder in sources.txt.
+wikipedia_en_all_nopic
+wiktionary_en_all_nopic
+wikibooks_en_all_nopic
+mdwiki_en_all
+unix.stackexchange.com_en_all
+devdocs_en_*

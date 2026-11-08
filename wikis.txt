@@ -1,3 +1,0 @@
-# <kiwix folder> <zim name without the build date>
-wikipedia wikipedia_en_all_nopic
-wiktionary wiktionary_en_all_nopic

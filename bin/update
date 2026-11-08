@@ -1,21 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+[ -f wikis.txt ] || { echo "no wikis.txt, start with: cp wikis.example.txt wikis.txt" >&2; exit 1; }
 
 base=https://download.kiwix.org/zim
+listings=$(mktemp -d)
+trap 'rm -rf "$listings"' EXIT
 mkdir -p zim
 
-grep -vE '^\s*(#|$)' wikis.txt | while read -r dir name; do
-  latest=$(curl -fsL --max-time 60 "$base/$dir/" | grep -oE "\"${name}_[0-9]{4}-[0-9]{2}\.zim\"" | tr -d '"' | sort | tail -1)
-  [ -n "$latest" ] || { echo "no build found for $name" >&2; exit 1; }
+# Prints "<folder> <file>" for the latest build of each ZIM matching the pattern.
+latest_builds() {
+  local pattern=$1 dir regex
+  dir=$(awk -v p="${pattern%%_*}" '$1 == p {print $2; exit}' sources.txt)
+  [ -n "$dir" ] || { echo "no Kiwix folder for $pattern in sources.txt" >&2; return 1; }
+  [ -f "$listings/$dir" ] || curl -fsL --max-time 60 "$base/$dir/" | grep -oE 'href="[^"/?]+\.zim"' | sed -E 's/href="|"//g' > "$listings/$dir"
+  regex="^$(sed 's/\./\\./g; s/\*/.*/g' <<<"$pattern")_[0-9]{4}-[0-9]{2}\.zim$"
+  { grep -E "$regex" "$listings/$dir" || true; } | sort -r | awk -v d="$dir" '{b=$0; sub(/_[0-9]{4}-[0-9]{2}\.zim$/, "", b)} !seen[b]++ {print d, $0}'
+}
 
-  if [ -f "zim/$latest" ]; then
-    echo "$latest is up to date"
-    continue
-  fi
+grep -vE '^\s*(#|$)' wikis.txt | while read -r pattern; do
+  builds=$(latest_builds "$pattern")
+  [ -n "$builds" ] || { echo "no builds found for $pattern" >&2; exit 1; }
 
-  echo "downloading $latest"
-  curl -fL -# -C - -o "zim/$latest.part" "$base/$dir/$latest"
-  mv "zim/$latest.part" "zim/$latest"
-  find zim -name "${name}_*.zim" ! -name "$latest" -print -delete
+  while read -r dir file; do
+    if [ -f "zim/$file" ]; then
+      echo "$file is up to date"
+      continue
+    fi
+
+    echo "downloading $file"
+    curl -fL -# -C - -o "zim/$file.part" "$base/$dir/$file"
+    mv "zim/$file.part" "zim/$file"
+    for old in zim/"${file%_*}"_*.zim; do
+      if [ "$old" != "zim/$file" ] && [ "${old%_*}" = "zim/${file%_*}" ]; then
+        rm -v "$old"
+      fi
+    done
+  done <<<"$builds"
 done
