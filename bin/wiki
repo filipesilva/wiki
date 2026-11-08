@@ -21,10 +21,6 @@ wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them 
 wiki index [wiki]                 build the index for _refs, for one wiki or all that aren't indexed yet
                                   it runs in parallel, skips wikis already indexed, and continues where it stopped
 """
-import contextlib
-import hashlib
-import html
-import io
 import json
 import os
 import posixpath
@@ -32,13 +28,10 @@ import re
 import resource
 import signal
 import socket
-import subprocess
 import sys
-import tempfile
 import time
-import traceback
+import zlib
 from pathlib import Path
-from urllib.parse import quote, unquote
 
 ROOT = Path(__file__).resolve().parent.parent
 KIWIX = "https://download.kiwix.org/zim"
@@ -130,6 +123,8 @@ def build_date(zim):
 
 
 def update(check=False):
+    import subprocess
+
     if not (ROOT / "wikis.txt").exists():
         sys.exit("no wikis.txt, start with: cp wikis.example.txt wikis.txt")
     patterns = [columns[0] for columns in manifest()]
@@ -245,6 +240,8 @@ def resolve(entry):
 
 
 def text(fragment):
+    import html
+
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", fragment))).strip()
 
 
@@ -341,6 +338,9 @@ def get(ref, section=None):
 
 def targets(archive, entry):
     """The articles an entry links to, in page order."""
+    import html
+    from urllib.parse import unquote
+
     base = posixpath.dirname(entry.path)
     seen, found = set(), {}
     for href in re.findall(r'href="([^"]+)"', bytes(entry.get_item().content).decode(errors="ignore")):
@@ -571,6 +571,9 @@ def backrefs(ref, n):
 
 
 def open_in_kiwix(ref):
+    import subprocess
+    from urllib.parse import quote
+
     if "/" in ref:
         _, archive, entry = lookup(ref)
         url = f"zim://{archive.uuid}/{quote(entry.path)}"
@@ -627,7 +630,7 @@ def main(args):
 
 # A background server keeps archives open between calls, since opening Wikipedia alone takes ~300ms.
 SERVED = {"list", "search", "outline", "get", "refs", "_refs"}
-SOCKET = Path(tempfile.gettempdir()) / f"wiki-{hashlib.sha1(str(ROOT).encode()).hexdigest()[:8]}.sock"
+SOCKET = Path(os.environ.get("TMPDIR", "/tmp")) / f"wiki-{zlib.crc32(str(ROOT).encode()):08x}.sock"
 VERSION = Path(__file__).stat().st_mtime_ns
 IDLE = 30 * 60
 
@@ -640,6 +643,10 @@ def read_all(conn):
 
 
 def serve():
+    import contextlib
+    import io
+    import traceback
+
     signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     SOCKET.unlink(missing_ok=True)
     server = socket.socket(socket.AF_UNIX)
@@ -679,6 +686,8 @@ def serve():
 
 def via_server(args):
     """Runs args in the server and exits, or starts a server and returns, so args run here this time."""
+    import subprocess
+
     try:
         with socket.socket(socket.AF_UNIX) as conn:
             conn.connect(str(SOCKET))
