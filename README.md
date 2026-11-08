@@ -9,7 +9,7 @@ Needs [uv](https://docs.astral.sh/uv/). Run `bin/wiki install` to add `wiki` to 
 - `bin/wiki`: wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`. Opening Wikipedia alone takes about 300ms, so the read commands start a background server that keeps the wikis open until 30 minutes after the last call.
   - `install`: add `wiki` to your `PATH`, in the config of your shell (bash, zsh or fish).
   - `skill [dir]`: add a skill for using `wiki` to a skills folder, by default [Claude Code's](https://code.claude.com/docs/en/skills) `~/.claude/skills`, or `$CLAUDE_CONFIG_DIR/skills` when that's set. Run it again after moving the repo.
-  - `update`: download the latest build of each wiki into `zim/`, and delete older builds.
+  - `update [--check]`: download the latest build of each wiki into `zim/`, and delete older builds. With `--check` it only lists the wikis that have a newer build, and their download sizes.
   - `sources`: regenerate `sources.txt`.
   - `list`
   - `search <query> [-n N]`: exact title matches first, then one ranked full-text search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_clojure`.

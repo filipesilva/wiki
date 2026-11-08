@@ -7,7 +7,8 @@
 
 wiki install                      add wiki to your PATH, in your shell's config
 wiki skill [dir]                  add a skill for using wiki to a skills folder, by default Claude Code's ~/.claude/skills
-wiki update                       download the latest build of each wiki in wikis.txt, and delete older builds
+wiki update [--check]             download the latest build of each wiki in wikis.txt, and delete older builds
+                                  --check only lists the wikis with a newer build, and their download sizes
 wiki sources                      regenerate sources.txt, the Kiwix folder for each ZIM name prefix
 wiki list                         list wikis
 wiki search <query> [-n N]        exact title matches, then ranked full-text search across all wikis, N hits (default 10)
@@ -97,10 +98,11 @@ def skill(skills=None):
 
 
 def listing(folder):
+    """{zim file: size} for a Kiwix folder, e.g. {"wikipedia_en_all_nopic_2026-06.zim": "49G"}."""
     import urllib.request
 
     with urllib.request.urlopen(f"{KIWIX}/{folder}/", timeout=60) as r:
-        return re.findall(r'href="([^"/?]+\.zim)"', r.read().decode())
+        return dict(re.findall(r'href="([^"/?]+\.zim)">[^<]*</a>\s+\S+\s+\S+\s+(\S+)', r.read().decode()))
 
 
 def sources():
@@ -123,12 +125,16 @@ def pattern_re(pattern):
     return re.escape(pattern).replace(r"\*", "(.*)")
 
 
-def update():
+def build_date(zim):
+    return Path(zim).stem.rsplit("_", 1)[1]
+
+
+def update(check=False):
     if not (ROOT / "wikis.txt").exists():
         sys.exit("no wikis.txt, start with: cp wikis.example.txt wikis.txt")
     patterns = [columns[0] for columns in manifest()]
     folders = dict(line.split() for line in (ROOT / "sources.txt").read_text().splitlines() if not line.startswith("#"))
-    zim, listings = ROOT / "zim", {}
+    zim, listings, outdated, wikis_seen = ROOT / "zim", {}, 0, 0
     zim.mkdir(exist_ok=True)
     for pattern in patterns:
         if (folder := folders.get(pattern.split("_")[0])) is None:
@@ -141,6 +147,14 @@ def update():
             sys.exit(f"no builds found for {pattern}")
         for base, file in latest.items():
             target = zim / file
+            wikis_seen += 1
+            if check:
+                if not target.exists():
+                    outdated += 1
+                    current = sorted(build_date(p) for p in zim.glob(f"{base}_*.zim") if full_name(p) == base)
+                    change = f"{current[-1]} -> {build_date(file)}" if current else f"not downloaded, {build_date(file)}"
+                    print(f"{base}  {change}, {listings[folder][file]}")
+                continue
             if target.exists():
                 print(f"{file} is up to date")
                 continue
@@ -155,6 +169,8 @@ def update():
                         if stale.exists():
                             stale.unlink()
                             print(f"removed {stale.name}")
+    if check:
+        print(f"{outdated} of {wikis_seen} wikis have a newer build" + (", get them with: wiki update" if outdated else ""))
 
 
 def aliases():
@@ -570,6 +586,8 @@ def main(args):
             skill(skills)
         case ["update"]:
             update()
+        case ["update", "--check"]:
+            update(check=True)
         case ["sources"]:
             sources()
         case ["list"]:
