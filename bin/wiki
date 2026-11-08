@@ -8,7 +8,9 @@ wiki list                   list wikis
 wiki search <query> [-n N]  full-text search across all wikis, N hits each (default 5)
 wiki get <wiki>/<path>      print an article as markdown
 """
+import html
 import re
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -20,14 +22,20 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def wikis():
-    return {p.stem.rsplit("_", 1)[0]: Archive(p) for p in sorted((ROOT / "zim").glob("*.zim"))}
+    found = {}
+    for p in sorted((ROOT / "zim").glob("*.zim")):
+        try:
+            found[p.stem.rsplit("_", 1)[0]] = Archive(p)
+        except RuntimeError as e:
+            print(f"skipping {p.name}: {e}", file=sys.stderr)
+    return found
 
 
 def search(query, n=5):
     for name, archive in wikis().items():
         results = Searcher(archive).search(Query().set_query(query))
         for r in results.get_results(0, n):
-            snippet = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", r.snippet)).strip()
+            snippet = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", r.snippet))).strip()
             print(f"{name}/{r.path}  {r.title}\n  {snippet}")
 
 
@@ -37,10 +45,10 @@ def get(ref):
     entry = archive.get_entry_by_path(path)
     while entry.is_redirect:
         entry = entry.get_redirect_entry()
-    html = bytes(entry.get_item().content)
+    content = bytes(entry.get_item().content)
     md = subprocess.run(
         ["pandoc", "-f", "html", "-t", "gfm-raw_html", "--wrap=none", f"--lua-filter={ROOT / 'lib/strip.lua'}"],
-        input=html, capture_output=True, check=True,
+        input=content, capture_output=True, check=True,
     ).stdout.decode()
     print(md)
 
@@ -63,4 +71,5 @@ def main(args):
             sys.exit(__doc__)
 
 
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 main(sys.argv[1:])
