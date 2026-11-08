@@ -1,4 +1,4 @@
-# wikis
+# wiki
 
 Local [Kiwix](https://kiwix.org) ZIM wikis, and `bin/wiki`, a CLI to download, search and read them as markdown, for humans and agents.
 
