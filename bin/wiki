@@ -1,0 +1,66 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# dependencies = ["libzim"]
+# ///
+"""Search and read the local ZIM wikis.
+
+wiki list                   list wikis
+wiki search <query> [-n N]  full-text search across all wikis, N hits each (default 5)
+wiki get <wiki>/<path>      print an article as markdown
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+from libzim.reader import Archive
+from libzim.search import Query, Searcher
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def wikis():
+    return {p.stem.rsplit("_", 1)[0]: Archive(p) for p in sorted((ROOT / "zim").glob("*.zim"))}
+
+
+def search(query, n=5):
+    for name, archive in wikis().items():
+        results = Searcher(archive).search(Query().set_query(query))
+        for r in results.get_results(0, n):
+            snippet = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", r.snippet)).strip()
+            print(f"{name}/{r.path}  {r.title}\n  {snippet}")
+
+
+def get(ref):
+    name, path = ref.split("/", 1)
+    archive = wikis()[name]
+    entry = archive.get_entry_by_path(path)
+    while entry.is_redirect:
+        entry = entry.get_redirect_entry()
+    html = bytes(entry.get_item().content)
+    md = subprocess.run(
+        ["pandoc", "-f", "html", "-t", "gfm-raw_html", "--wrap=none", f"--lua-filter={ROOT / 'lib/strip.lua'}"],
+        input=html, capture_output=True, check=True,
+    ).stdout.decode()
+    print(md)
+
+
+def main(args):
+    match args:
+        case ["list"]:
+            for name, archive in wikis().items():
+                print(f"{name}  {archive.entry_count} entries")
+        case ["search", *rest] if rest:
+            n = 5
+            if "-n" in rest:
+                i = rest.index("-n")
+                n = int(rest[i + 1])
+                rest = rest[:i] + rest[i + 2:]
+            search(" ".join(rest), n)
+        case ["get", ref]:
+            get(ref)
+        case _:
+            sys.exit(__doc__)
+
+
+main(sys.argv[1:])
