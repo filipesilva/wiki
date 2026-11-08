@@ -9,13 +9,20 @@ wiki search <query> [-n N]        exact title matches, then ranked full-text sea
                                   in:<prefix> in the query limits it to wikis whose name starts with prefix
 wiki outline <wiki>/<path>        print an article's headings, with the size of each section
 wiki get <wiki>/<path> [section]  print an article, or one section of it, as markdown
+wiki refs <wiki>/<path>           print the articles it links to
+wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them (default 50), needs wiki index
+wiki index <wiki>                 build the index for _refs
 """
 import html
+import posixpath
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.parse import unquote
 
 from libzim.reader import Archive
 from libzim.search import Query, Searcher
@@ -156,24 +163,94 @@ def get(ref, section=None):
     print("\n".join(lines[match[0]:match[1]]))
 
 
+def targets(archive, entry):
+    """The articles an entry links to, in page order."""
+    base = posixpath.dirname(entry.path)
+    found = {}
+    for href in re.findall(r'href="([^"]+)"', bytes(entry.get_item().content).decode(errors="ignore")):
+        href = unquote(html.unescape(href).split("#")[0].split("?")[0])
+        if not href or href.startswith("/") or re.match(r"[a-z][a-z0-9+.-]*:", href):
+            continue
+        path = posixpath.normpath(posixpath.join(base, href))
+        if path in found or not archive.has_entry_by_path(path):
+            continue
+        target = resolve(archive.get_entry_by_path(path))
+        found[path] = target if target.path != entry.path and target.get_item().mimetype.startswith("text/html") else None
+    return list({t.path: t for t in found.values() if t}.values())
+
+
+def refs(ref):
+    name, archive, entry = lookup(ref)
+    for t in targets(archive, entry):
+        print(f"{name}/{t.path}  {t.title}")
+
+
+def index_path(archive):
+    return Path(f"{archive.filename}.refs.sqlite")
+
+
+def index(name):
+    found = wikis()
+    if name not in found:
+        sys.exit(f"no wiki named {name}, see: wiki list")
+    archive = found[name]
+    path = index_path(archive)
+    tmp = path.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
+    db = sqlite3.connect(tmp)
+    db.executescript("pragma journal_mode=off; pragma synchronous=off;"
+                     "create table refs (src integer, dst integer, primary key (dst, src)) without rowid;")
+    start, done = time.time(), 0
+    for entry in archive.iter_efficient():
+        if entry.is_redirect or not entry.get_item().mimetype.startswith("text/html"):
+            continue
+        db.executemany("insert or ignore into refs values (?, ?)", ((entry._index, t._index) for t in targets(archive, entry)))
+        done += 1
+        if done % 50_000 == 0:
+            print(f"{done:,} articles, {time.time() - start:.0f}s", file=sys.stderr)
+    db.commit()
+    db.close()
+    tmp.rename(path)
+    print(f"{done:,} articles in {time.time() - start:.0f}s, {path.stat().st_size / 1e6:.0f}MB at {path.name}")
+
+
+def backrefs(ref, n):
+    name, archive, entry = lookup(ref)
+    path = index_path(archive)
+    if not path.exists():
+        sys.exit(f"no index for {name}, build it with: wiki index {name}")
+    db = sqlite3.connect(path)
+    total = db.execute("select count(*) from refs where dst = ?", (entry._index,)).fetchone()[0]
+    print(f"{total:,} articles link to {name}/{entry.path}")
+    for (src,) in db.execute("select src from refs where dst = ? limit ?", (entry._index, n)):
+        e = archive.get_entry_by_id(src)
+        print(f"{name}/{e.path}  {e.title}")
+
+
 def main(args):
+    n = None
+    if "-n" in args:
+        i = args.index("-n")
+        n = int(args[i + 1])
+        args = args[:i] + args[i + 2:]
     match args:
         case ["list"]:
             for name, archive in wikis().items():
                 print(f"{name}  {archive.entry_count:,} entries  {Path(archive.filename).name}")
         case ["search", *rest] if rest:
-            n = 10
-            if "-n" in rest:
-                i = rest.index("-n")
-                n = int(rest[i + 1])
-                rest = rest[:i] + rest[i + 2:]
-            search(" ".join(rest), n)
+            search(" ".join(rest), n or 10)
         case ["outline", ref]:
             outline(ref)
         case ["get", ref]:
             get(ref)
         case ["get", ref, *section] if section:
             get(ref, " ".join(section))
+        case ["refs", ref]:
+            refs(ref)
+        case ["_refs", ref]:
+            backrefs(ref, n or 50)
+        case ["index", name]:
+            index(name)
         case _:
             sys.exit(__doc__)
 

@@ -33,7 +33,7 @@ grep -vE '^\s*(#|$)' wikis.txt | while read -r pattern _; do
     mv "zim/$file.part" "zim/$file"
     for old in zim/"${file%_*}"_*.zim; do
       if [ "$old" != "zim/$file" ] && [ "${old%_*}" = "zim/${file%_*}" ]; then
-        rm -v "$old"
+        rm -fv "$old" "$old.refs.sqlite"
       fi
     done
   done <<<"$builds"

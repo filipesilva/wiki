@@ -12,5 +12,7 @@ Needs [uv](https://docs.astral.sh/uv/) and [pandoc](https://pandoc.org).
   - `search <query> [-n N]`: exact title matches first, then one ranked full-text search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_clojure`.
   - `outline <wiki>/<path>`: the article's headings, with the size of each section.
   - `get <wiki>/<path> [section]`: the article, or one section of it, as markdown.
+  - `refs <wiki>/<path>`: the articles it links to.
+  - `_refs <wiki>/<path> [-n N]`: the articles that link to it. Needs `index <wiki>` first, which writes a `.refs.sqlite` file next to the ZIM.
 
 The Kiwix desktop app (`brew install --cask kiwix`) can open the same files in `zim/`.
