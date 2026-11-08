@@ -85,6 +85,14 @@ def text(fragment):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", fragment))).strip()
 
 
+def first_sentence(entry):
+    for p in re.findall(r"<p[^>]*>(.*?)</p>", bytes(entry.get_item().content).decode(errors="ignore"), re.S):
+        if len(p := text(p)) > 20:
+            m = re.match(r"(.{20,}?[.!?])(\s|$)", p)
+            return (m[1] if m else p)[:300]
+    return ""
+
+
 def search(query, n):
     words = query.split()
     scopes = [w[3:] for w in words if w.startswith("in:")]
@@ -101,7 +109,7 @@ def search(query, n):
         for title in dict.fromkeys([q, q[:1].upper() + q[1:], q.lower()]):
             if a.has_entry_by_title(title):
                 entry = resolve(a.get_entry_by_title(title))
-                hits.append((name, entry.path, entry.title, "title match"))
+                hits.append((name, entry.path, entry.title, first_sentence(entry)))
                 break
 
     seen = {(name, path) for name, path, _, _ in hits}
