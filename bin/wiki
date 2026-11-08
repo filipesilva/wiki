@@ -4,9 +4,11 @@
 # ///
 """Search and read the local ZIM wikis.
 
-wiki list                   list wikis
-wiki search <query> [-n N]  full-text search across all wikis, N hits each (default 5)
-wiki get <wiki>/<path>      print an article as markdown
+wiki list                         list wikis
+wiki search <query> [-n N]        ranked full-text search across all wikis, N hits (default 10)
+                                  in:<prefix> in the query limits it to wikis whose name starts with prefix
+wiki outline <wiki>/<path>        print an article's headings, with the size of each section
+wiki get <wiki>/<path> [section]  print an article, or one section of it, as markdown
 """
 import html
 import re
@@ -31,26 +33,72 @@ def wikis():
     return found
 
 
-def search(query, n=5):
-    for name, archive in wikis().items():
-        results = Searcher(archive).search(Query().set_query(query))
-        for r in results.get_results(0, n):
+def search(query, n):
+    words = query.split()
+    scopes = [w[3:] for w in words if w.startswith("in:")]
+    text = " ".join(w for w in words if not w.startswith("in:"))
+    archives = {
+        a.filename: name
+        for name, a in wikis().items()
+        if a.has_fulltext_index and (not scopes or any(name.startswith(s) for s in scopes))
+    }
+    if not archives:
+        sys.exit(f"no wikis match {' '.join('in:' + s for s in scopes)}")
+    results = Searcher(*(Archive(f) for f in archives)).search(Query().set_query(text))
+    shown = start = 0
+    while shown < n and (batch := list(results.get_results(start, n))):
+        start += len(batch)
+        for r in batch:
+            if r.path.startswith("Category:") or shown == n:
+                continue
             snippet = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", r.snippet))).strip()
-            print(f"{name}/{r.path}  {r.title}\n  {snippet}")
+            print(f"{archives[r.archive.filename]}/{r.path}  {r.title}\n  {snippet}")
+            shown += 1
 
 
-def get(ref):
+def markdown(ref):
     name, path = ref.split("/", 1)
-    archive = wikis()[name]
-    entry = archive.get_entry_by_path(path)
+    entry = wikis()[name].get_entry_by_path(path)
     while entry.is_redirect:
         entry = entry.get_redirect_entry()
-    content = bytes(entry.get_item().content)
-    md = subprocess.run(
+    return subprocess.run(
         ["pandoc", "-f", "html", "-t", "gfm-raw_html", "--wrap=none", f"--lua-filter={ROOT / 'lib/strip.lua'}"],
-        input=content, capture_output=True, check=True,
+        input=bytes(entry.get_item().content), capture_output=True, check=True,
     ).stdout.decode()
-    print(md)
+
+
+def sections(lines):
+    """Yields (start, end, level, title) for each heading, end including subsections."""
+    headings, fence = [], False
+    for i, line in enumerate(lines):
+        if line.startswith(("```", "~~~")):
+            fence = not fence
+        elif not fence and (m := re.match(r"(#+) (.+)", line)):
+            headings.append((i, len(m[1]), m[2].strip()))
+    for k, (start, level, title) in enumerate(headings):
+        end = next((i for i, l, _ in headings[k + 1:] if l <= level), len(lines))
+        yield start, end, level, title
+
+
+def outline(ref):
+    lines = markdown(ref).splitlines()
+    for start, end, level, title in sections(lines):
+        print(f"{'  ' * (level - 1)}{title}  ({len(''.join(lines[start:end])):,} chars)")
+
+
+def get(ref, section=None):
+    md = markdown(ref)
+    if section is None:
+        print(md)
+        return
+    lines = md.splitlines()
+    found = list(sections(lines))
+    want = section.lower()
+    candidates = [s for s in found if want in s[3].lower()]
+    match = min(candidates, key=lambda s: (s[3].lower() != want, not s[3].lower().startswith(want), len(s[3])), default=None)
+    if match is None:
+        sys.exit(f"no section matching {section!r}, see: wiki outline {ref}")
+    print("\n".join(lines[match[0]:match[1]]))
 
 
 def main(args):
@@ -59,14 +107,18 @@ def main(args):
             for name, archive in wikis().items():
                 print(f"{name}  {archive.entry_count} entries")
         case ["search", *rest] if rest:
-            n = 5
+            n = 10
             if "-n" in rest:
                 i = rest.index("-n")
                 n = int(rest[i + 1])
                 rest = rest[:i] + rest[i + 2:]
             search(" ".join(rest), n)
+        case ["outline", ref]:
+            outline(ref)
         case ["get", ref]:
             get(ref)
+        case ["get", ref, *section] if section:
+            get(ref, " ".join(section))
         case _:
             sys.exit(__doc__)
 
