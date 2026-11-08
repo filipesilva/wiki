@@ -1,13 +1,14 @@
 # wikis
 
-Local [Kiwix](https://kiwix.org) ZIM wikis, and a CLI to search and read them.
+Local [Kiwix](https://kiwix.org) ZIM wikis, and `bin/wiki`, a CLI to download, search and read them as markdown, for humans and agents.
 
 Needs [uv](https://docs.astral.sh/uv/).
 
-- `wikis.txt`: the wikis to keep, as ZIM names without the build date. `*` matches any text, e.g. `devdocs_en_*`. An optional second column gives a short name for `bin/wiki`, e.g. `devdocs_*` names `devdocs_en_clojure` as `devdocs_clojure`. Start from the example with `cp wikis.example.txt wikis.txt`.
-- `sources.txt`: the [Kiwix download](https://download.kiwix.org/zim/) folder for each ZIM name prefix, e.g. `unix.stackexchange.com stack_exchange`. Use it to find names for your own `wikis.txt`. `bin/sources` regenerates it.
-- `bin/update`: downloads the latest build of each wiki into `zim/`, and deletes older builds.
-- `bin/wiki`: read the wikis, for people and agents. Wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`.
+- `wikis.txt`: the wikis to keep, as ZIM names without the build date. `*` matches any text, e.g. `devdocs_en_*`. An optional second column gives a short name, e.g. `devdocs_*` names `devdocs_en_clojure` as `devdocs_clojure`. Start from the example with `cp wikis.example.txt wikis.txt`.
+- `sources.txt`: the [Kiwix download](https://download.kiwix.org/zim/) folder for each ZIM name prefix, e.g. `unix.stackexchange.com stack_exchange`. Use it to find names for your own `wikis.txt`.
+- `bin/wiki`: wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`.
+  - `update`: download the latest build of each wiki into `zim/`, and delete older builds.
+  - `sources`: regenerate `sources.txt`.
   - `list`
   - `search <query> [-n N]`: exact title matches first, then one ranked full-text search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_clojure`.
   - `outline <wiki>/<path>`: the article's headings, with the size of each section.
@@ -24,4 +25,4 @@ Open them with File > Open... (⌘O), one at a time, or with the + button in the
 `bin/wiki open <wiki>` opens one too.
 Once a wiki is open in Kiwix, `bin/wiki open <wiki>/<path>` opens a single article in it, e.g. one you found with `bin/wiki search`.
 
-Kiwix doesn't watch the folder, so after `bin/update` downloads a new build, open the new file and remove the old one.
+Kiwix doesn't watch the folder, so after `bin/wiki update` downloads a new build, open the new file and remove the old one.

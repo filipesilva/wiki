@@ -1,6 +1,6 @@
 # Copy to wikis.txt and edit. ZIM names without the build date, * matches any text.
-# An optional second column is a short name for bin/wiki, with * filled in from the match.
-# bin/update finds each one's Kiwix folder in sources.txt.
+# An optional second column is a short name, with * filled in from the match.
+# wiki update finds each one's Kiwix folder in sources.txt.
 wikipedia_en_all_nopic         wikipedia
 wiktionary_en_all_nopic        wiktionary
 wikibooks_en_all_nopic         wikibooks
