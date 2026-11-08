@@ -6,7 +6,7 @@ Needs [uv](https://docs.astral.sh/uv/). Run `bin/wiki install` to add `wiki` to 
 
 - `wikis.txt`: the wikis to keep, as ZIM names without the build date. `*` matches any text, e.g. `devdocs_en_*`. An optional second column gives a short name, e.g. `devdocs_*` names `devdocs_en_clojure` as `devdocs_clojure`. Start from the example with `cp wikis.example.txt wikis.txt`.
 - `sources.txt`: the [Kiwix download](https://download.kiwix.org/zim/) folder for each ZIM name prefix, e.g. `unix.stackexchange.com stack_exchange`. Use it to find names for your own `wikis.txt`.
-- `bin/wiki`: wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`.
+- `bin/wiki`: wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`. Opening Wikipedia alone takes about 300ms, so the read commands start a background server that keeps the wikis open until 30 minutes after the last call.
   - `install`: add `wiki` to your `PATH`, in the config of your shell (bash, zsh or fish).
   - `skill [dir]`: add a skill for using `wiki` to a skills folder, by default [Claude Code's](https://code.claude.com/docs/en/skills) `~/.claude/skills`, or `$CLAUDE_CONFIG_DIR/skills` when that's set. Run it again after moving the repo.
   - `update`: download the latest build of each wiki into `zim/`, and delete older builds.

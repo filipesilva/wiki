@@ -19,16 +19,23 @@ wiki refs <wiki>/<path>           print the articles it links to
 wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them (default 50), needs wiki index
 wiki index <wiki>                 build the index for _refs
 """
+import contextlib
+import hashlib
 import html
+import io
+import json
 import os
 import posixpath
 import re
 import resource
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
+import traceback
 import urllib.request
 from pathlib import Path
 from urllib.parse import quote, unquote
@@ -174,12 +181,18 @@ def wikis():
     return found
 
 
+ARCHIVES = {}
+
+
 def open_archive(path):
-    """The archive, or None with a warning when the file can't be read."""
-    try:
-        return Archive(path)
-    except RuntimeError as e:
-        print(f"can't read {path.name}: {e}", file=sys.stderr)
+    """The archive, kept open for later calls, or None with a warning when the file can't be read."""
+    if path not in ARCHIVES:
+        try:
+            ARCHIVES[path] = Archive(path)
+        except RuntimeError as e:
+            print(f"can't read {path.name}: {e}", file=sys.stderr)
+            return None
+    return ARCHIVES[path]
 
 
 def find(wiki):
@@ -388,7 +401,6 @@ def main(args):
             for name, path in wikis().items():
                 if archive := open_archive(path):
                     print(f"{name}  {archive.entry_count:,} entries  {path.name}")
-                    del archive
         case ["search", *rest] if rest:
             search(" ".join(rest), n or 10)
         case ["outline", ref]:
@@ -409,8 +421,85 @@ def main(args):
             sys.exit(__doc__)
 
 
+# A background server keeps archives open between calls, since opening Wikipedia alone takes ~300ms.
+SERVED = {"list", "search", "outline", "get", "refs", "_refs"}
+SOCKET = Path(tempfile.gettempdir()) / f"wiki-{hashlib.sha1(str(ROOT).encode()).hexdigest()[:8]}.sock"
+VERSION = Path(__file__).stat().st_mtime_ns
+IDLE = 30 * 60
+
+
+def read_all(conn):
+    chunks = []
+    while chunk := conn.recv(1 << 16):
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def serve():
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    SOCKET.unlink(missing_ok=True)
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(SOCKET))
+    os.chmod(SOCKET, 0o600)
+    server.listen()
+    server.settimeout(IDLE)
+    try:
+        while True:
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                return
+            with conn:
+                request = json.loads(read_all(conn))
+                if request["version"] != VERSION:
+                    conn.sendall(b'{"stale": true}')
+                    return
+                for path in [p for p in ARCHIVES if not p.exists()]:
+                    del ARCHIVES[path]
+                out, err, code = io.StringIO(), io.StringIO(), 0
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    try:
+                        main(request["args"])
+                    except SystemExit as e:
+                        code = e.code if isinstance(e.code, int) else 1
+                        if isinstance(e.code, str):
+                            print(e.code, file=sys.stderr)
+                    except Exception:
+                        traceback.print_exc()
+                        code = 1
+                with contextlib.suppress(OSError):
+                    conn.sendall(json.dumps({"out": out.getvalue(), "err": err.getvalue(), "code": code}).encode())
+    finally:
+        SOCKET.unlink(missing_ok=True)
+
+
+def via_server(args):
+    """Runs args in the server and exits, or starts a server and returns, so args run here this time."""
+    try:
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.connect(str(SOCKET))
+            conn.sendall(json.dumps({"args": args, "version": VERSION}).encode())
+            conn.shutdown(socket.SHUT_WR)
+            reply = json.loads(read_all(conn))
+    except (OSError, ValueError):
+        reply = {"stale": True}
+    if reply.get("stale"):
+        subprocess.Popen([sys.executable, __file__, "_serve"], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    sys.stdout.write(reply["out"])
+    sys.stderr.write(reply["err"])
+    sys.exit(reply["code"])
+
+
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 # search keeps every wiki open, and macOS shells default to 256 open files
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(hard, 10240)), hard))
-main(sys.argv[1:])
+args = sys.argv[1:]
+if args == ["_serve"]:
+    serve()
+else:
+    if args[:1] and args[0] in SERVED:
+        via_server(args)
+    main(args)
