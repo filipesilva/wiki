@@ -17,7 +17,8 @@ Needs [uv](https://docs.astral.sh/uv/). Run `bin/wiki install` to add `wiki` to 
   - `get <wiki>/<path> [section]`: the article, or one section of it, as markdown.
   - `open <wiki>[/<path>]`: open the wiki, or an article in it, in the Kiwix app. The wiki must be open in Kiwix for its articles to load.
   - `refs <wiki>/<path>`: the articles it links to.
-  - `_refs <wiki>/<path> [-n N]`: the articles that link to it. Needs `index <wiki>` first, which writes a `.refs.sqlite` file next to the ZIM.
+  - `_refs <wiki>/<path> [-n N]`: the articles that link to it. Needs the wiki indexed first.
+  - `index [wiki]`: index the links of one wiki, or of every wiki not indexed yet, into a `.refs.sqlite` file next to the ZIM. It skips wikis that are already indexed, so run it again after `update`. You can stop it any time and run it again to continue. Wikipedia takes a while.
 
 
 ## Reading in Kiwix

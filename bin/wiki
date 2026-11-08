@@ -17,7 +17,8 @@ wiki get <wiki>/<path> [section]  print an article, or one section of it, as mar
 wiki open <wiki>[/<path>]         open the wiki, or an article in it, in the Kiwix app
 wiki refs <wiki>/<path>           print the articles it links to
 wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them (default 50), needs wiki index
-wiki index <wiki>                 build the index for _refs
+wiki index [wiki]                 build the index for _refs, for one wiki or all that aren't indexed yet
+                                  it runs in parallel, skips wikis already indexed, and continues where it stopped
 """
 import contextlib
 import hashlib
@@ -150,7 +151,7 @@ def update():
             part.rename(target)
             for old in zim.glob(f"{base}_*.zim"):
                 if old != target and full_name(old) == base:
-                    for stale in (old, index_path(old)):
+                    for stale in (old, index_path(old), build_path(old)):
                         if stale.exists():
                             stale.unlink()
                             print(f"removed {stale.name}")
@@ -353,28 +354,179 @@ def index_path(zim):
     return Path(f"{zim}.refs.sqlite")
 
 
-def index(wiki):
+def build_path(zim):
+    return Path(f"{zim}.refs.build.sqlite")
+
+
+# The index has one row per linked-to article: its entry id, and the sorted ids of the articles that link to it,
+# stored as the first id and then the gaps between ids, each as a varint.
+def pack(ids):
+    out, last = bytearray(), 0
+    for i in ids:
+        gap, last = i - last, i
+        while gap > 0x7F:
+            out.append(gap & 0x7F | 0x80)
+            gap >>= 7
+        out.append(gap)
+    return bytes(out)
+
+
+def unpack(blob):
+    ids, n, shift, last = [], 0, 0, 0
+    for byte in blob:
+        n |= (byte & 0x7F) << shift
+        if byte & 0x80:
+            shift += 7
+        else:
+            last += n
+            ids.append(last)
+            n = shift = 0
+    return ids
+
+
+# The build splits the archive into blocks of entries, in libzim's efficient order, and buckets links by target id.
+# Finished blocks and buckets are saved as they go, so an interrupted build continues where it stopped.
+BLOCK = 10_000
+BUCKETS = 256
+
+
+def index_worker(zim, worker, workers, done, queue):
+    """Sends (block, articles, {bucket: packed target<<32|source pairs}) for its share of the blocks, then None."""
+    from array import array
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    archive = open_archive(Path(zim))
+    # link targets repeat a lot, and every uncached lookup reads the file, which slows down with more processes
+    archive.dirent_cache_max_size = 2_000_000
+    block, spill, articles = -1, None, 0
+    for i, entry in enumerate(archive.iter_efficient()):
+        if i // BLOCK != block:
+            if spill is not None:
+                queue.put((block, articles, {b: pairs.tobytes() for b, pairs in spill.items()}))
+            block, articles = i // BLOCK, 0
+            spill = {} if block % workers == worker and block not in done else None
+        if spill is None or entry.is_redirect or not entry.get_item().mimetype.startswith("text/html"):
+            continue
+        articles += 1
+        for target in targets(archive, entry):
+            bucket = target._index * BUCKETS // archive.all_entry_count
+            spill.setdefault(bucket, array("Q")).append(target._index << 32 | entry._index)
+    if spill is not None:
+        queue.put((block, articles, {b: pairs.tobytes() for b, pairs in spill.items()}))
+    queue.put(None)
+
+
+def indexed(zim):
+    """Whether zim has a finished index in the current format."""
     import sqlite3
 
-    _, archive = find(wiki)
-    path = index_path(archive.filename)
-    tmp = path.with_suffix(".tmp")
-    tmp.unlink(missing_ok=True)
-    db = sqlite3.connect(tmp)
-    db.executescript("pragma journal_mode=off; pragma synchronous=off;"
-                     "create table refs (src integer, dst integer, primary key (dst, src)) without rowid;")
-    start, done = time.time(), 0
-    for entry in archive.iter_efficient():
-        if entry.is_redirect or not entry.get_item().mimetype.startswith("text/html"):
+    if not index_path(zim).exists():
+        return False
+    try:
+        sqlite3.connect(f"file:{index_path(zim)}?mode=ro", uri=True).execute("select srcs from refs limit 0")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def index_all():
+    for name, path in wikis().items():
+        if not indexed(path):
+            index(name)
+
+
+def index(wiki):
+    import multiprocessing
+    import queue
+    import sqlite3
+    from array import array
+
+    name, archive = find(wiki)
+    if indexed(archive.filename):
+        print(f"{name} is already indexed")
+        return
+    build = build_path(archive.filename)
+    db = sqlite3.connect(build)
+    db.executescript("""
+        create table if not exists blocks (block integer primary key, articles integer);
+        create table if not exists spill (bucket integer, pairs blob);
+        create index if not exists spill_bucket on spill (bucket);
+        create table if not exists buckets (bucket integer primary key);
+        create table if not exists refs (dst integer primary key, srcs blob);
+    """)
+    start = time.time()
+
+    blocks = -(-archive.entry_count // BLOCK)
+    done = {b for (b,) in db.execute("select block from blocks")}
+    if len(done) < blocks:
+        # more than about 4 workers slows down, since they compete for reads of the same file
+        workers = max(1, min(4, (os.cpu_count() or 2) - 1, blocks))
+        print(f"scanning {name}: {len(done):,} of {blocks:,} blocks done, {workers} workers", file=sys.stderr)
+        context = multiprocessing.get_context("spawn")
+        results = context.Queue(maxsize=workers * 2)
+        procs = [context.Process(target=index_worker, args=(str(archive.filename), w, workers, done, results))
+                 for w in range(workers)]
+        for p in procs:
+            p.start()
+        running, scanned = workers, 0
+        try:
+            while running:
+                try:
+                    result = results.get(timeout=5)
+                except queue.Empty:
+                    if any(p.exitcode not in (None, 0) for p in procs):
+                        raise SystemExit(f"an index worker failed, run wiki index {wiki} again to continue")
+                    continue
+                if result is None:
+                    running -= 1
+                    continue
+                block, articles, spill = result
+                with db:
+                    db.executemany("insert into spill values (?, ?)", spill.items())
+                    db.execute("insert into blocks values (?, ?)", (block, articles))
+                done.add(block)
+                scanned += 1
+                if scanned % 20 == 0 or len(done) == blocks:
+                    elapsed = time.time() - start
+                    left = elapsed / scanned * (blocks - len(done))
+                    print(f"{len(done):,} of {blocks:,} blocks, {elapsed:.0f}s, about {left / 60:.0f}m left", file=sys.stderr)
+        except (KeyboardInterrupt, SystemExit) as e:
+            for p in procs:
+                p.terminate()
+            sys.exit(e.code if isinstance(e, SystemExit) else f"stopped, run wiki index {wiki} again to continue")
+        for p in procs:
+            p.join()
+
+    packed = {b for (b,) in db.execute("select bucket from buckets")}
+    for bucket in range(BUCKETS):
+        if bucket in packed:
             continue
-        db.executemany("insert or ignore into refs values (?, ?)", ((entry._index, t._index) for t in targets(archive, entry)))
-        done += 1
-        if done % 50_000 == 0:
-            print(f"{done:,} articles, {time.time() - start:.0f}s", file=sys.stderr)
-    db.commit()
+        pairs = array("Q")
+        for (blob,) in db.execute("select pairs from spill where bucket = ?", (bucket,)):
+            pairs.frombytes(blob)
+        rows, dst, srcs = [], None, []
+        for pair in sorted(pairs):
+            if pair >> 32 != dst:
+                if srcs:
+                    rows.append((dst, pack(srcs)))
+                dst, srcs = pair >> 32, []
+            srcs.append(pair & 0xFFFFFFFF)
+        if srcs:
+            rows.append((dst, pack(srcs)))
+        with db:
+            db.executemany("insert into refs values (?, ?)", rows)
+            db.execute("delete from spill where bucket = ?", (bucket,))
+            db.execute("insert into buckets values (?)", (bucket,))
+        if bucket % 32 == 31:
+            print(f"packed {bucket + 1} of {BUCKETS} buckets, {time.time() - start:.0f}s", file=sys.stderr)
+
+    articles = db.execute("select sum(articles) from blocks").fetchone()[0] or 0
+    targets_count = db.execute("select count(*) from refs").fetchone()[0]
+    db.executescript("drop table spill; drop table buckets; drop table blocks;")
+    db.execute("vacuum")
     db.close()
-    tmp.rename(path)
-    print(f"{done:,} articles in {time.time() - start:.0f}s, {path.stat().st_size / 1e6:.0f}MB at {path.name}")
+    path = build.rename(index_path(archive.filename))
+    print(f"{articles:,} articles, {targets_count:,} linked-to articles, {path.stat().st_size / 1e6:.0f}MB at {path.name}, {time.time() - start:.0f}s")
 
 
 def backrefs(ref, n):
@@ -384,10 +536,13 @@ def backrefs(ref, n):
     path = index_path(archive.filename)
     if not path.exists():
         sys.exit(f"no index for {name}, build it with: wiki index {name}")
-    db = sqlite3.connect(path)
-    total = db.execute("select count(*) from refs where dst = ?", (entry._index,)).fetchone()[0]
-    print(f"{total:,} articles link to {name}/{entry.path}")
-    for (src,) in db.execute("select src from refs where dst = ? limit ?", (entry._index, n)):
+    try:
+        row = sqlite3.connect(path).execute("select srcs from refs where dst = ?", (entry._index,)).fetchone()
+    except sqlite3.OperationalError:
+        sys.exit(f"the index for {name} is in an old format, rebuild it with: wiki index {name}")
+    srcs = unpack(row[0]) if row else []
+    print(f"{len(srcs):,} articles link to {name}/{entry.path}")
+    for src in srcs[:n]:
         e = archive.get_entry_by_id(src)
         print(f"{name}/{e.path}  {e.title}")
 
@@ -435,6 +590,8 @@ def main(args):
             refs(ref)
         case ["_refs", ref]:
             backrefs(ref, n or 50)
+        case ["index"]:
+            index_all()
         case ["index", name]:
             index(name)
         case _:
@@ -512,14 +669,16 @@ def via_server(args):
     sys.exit(reply["code"])
 
 
-signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-# search keeps every wiki open, and macOS shells default to 256 open files
-soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(hard, 10240)), hard))
-args = sys.argv[1:]
-if args == ["_serve"]:
-    serve()
-else:
-    if args[:1] and args[0] in SERVED:
-        via_server(args)
-    main(args)
+# index workers are spawned processes that import this file, so only run commands when it's the main script
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    # search keeps every wiki open, and macOS shells default to 256 open files
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(hard, 10240)), hard))
+    args = sys.argv[1:]
+    if args == ["_serve"]:
+        serve()
+    else:
+        if args[:1] and args[0] in SERVED:
+            via_server(args)
+        main(args)
