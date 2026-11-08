@@ -1,6 +1,6 @@
 # wiki
 
-Local [Kiwix](https://kiwix.org) ZIM wikis, and `bin/wiki`, a CLI to download, search and read them as markdown, for humans and agents.
+[Kiwix](https://kiwix.org) packages sites like Wikipedia, Stack Overflow and DevDocs as ZIM files, single compressed archives with a built-in search index, for reading offline. `bin/wiki` is a CLI to download, search and read them locally as markdown, for humans and agents.
 
 Needs [uv](https://docs.astral.sh/uv/). Run `bin/wiki install` to add `wiki` to your `PATH`, or use `bin/wiki` directly.
 
