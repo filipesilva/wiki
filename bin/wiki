@@ -446,9 +446,11 @@ def indexed(zim):
 
 
 def index_all():
-    for name, path in wikis().items():
-        if not indexed(path):
-            index(name)
+    todo = [name for name, path in wikis().items() if not indexed(path)]
+    for name in todo:
+        index(name)
+    if not todo:
+        print("all wikis are indexed")
 
 
 def index(wiki):
@@ -459,7 +461,7 @@ def index(wiki):
 
     name, archive = find(wiki)
     if indexed(archive.filename):
-        print(f"{name} is already indexed")
+        print(f"{name} is already indexed", flush=True)
         return
     build = build_path(archive.filename)
     db = sqlite3.connect(build)
@@ -484,7 +486,7 @@ def index(wiki):
                  for w in range(workers)]
         for p in procs:
             p.start()
-        running, scanned = workers, 0
+        running, scanned, times = workers, 0, []
         try:
             while running:
                 try:
@@ -502,10 +504,15 @@ def index(wiki):
                     db.execute("insert into blocks values (?, ?)", (block, articles))
                 done.add(block)
                 scanned += 1
+                times.append(time.time())
                 if scanned % 20 == 0 or len(done) == blocks:
                     elapsed = time.time() - start
-                    left = elapsed / scanned * (blocks - len(done))
-                    print(f"{len(done):,} of {blocks:,} blocks, {elapsed:.0f}s, about {left / 60:.0f}m left", file=sys.stderr)
+                    # blocks vary a lot, e.g. Wikipedia's first half is mostly redirects, so use the recent rate
+                    recent = times[-100:]
+                    rate = (len(recent) - 1) / (recent[-1] - recent[0]) if len(recent) > 1 and recent[-1] > recent[0] else 0
+                    left = (blocks - len(done)) / rate if rate else 0
+                    left = f"{left / 60:.0f}m" if left >= 60 else f"{left:.0f}s"
+                    print(f"{len(done):,} of {blocks:,} blocks, {elapsed:.0f}s, about {left} left", file=sys.stderr)
         except (KeyboardInterrupt, SystemExit) as e:
             for p in procs:
                 p.terminate()
@@ -542,7 +549,7 @@ def index(wiki):
     db.execute("vacuum")
     db.close()
     path = build.rename(index_path(archive.filename))
-    print(f"{articles:,} articles, {targets_count:,} linked-to articles, {path.stat().st_size / 1e6:.0f}MB at {path.name}, {time.time() - start:.0f}s")
+    print(f"{articles:,} articles, {targets_count:,} linked-to articles, {path.stat().st_size / 1e6:.0f}MB at {path.name}, {time.time() - start:.0f}s", flush=True)
 
 
 def backrefs(ref, n):
