@@ -8,6 +8,7 @@ Needs [uv](https://docs.astral.sh/uv/). Run `bin/wiki install` to add `wiki` to 
 - `sources.txt`: the [Kiwix download](https://download.kiwix.org/zim/) folder for each ZIM name prefix, e.g. `unix.stackexchange.com stack_exchange`. Use it to find names for your own `wikis.txt`.
 - `bin/wiki`: wikis go by their short name from `wikis.txt`, or their full name, e.g. `wiktionary_en_all_nopic`.
   - `install`: add `wiki` to your `PATH`, in the config of your shell (bash, zsh or fish).
+  - `skill [dir]`: add a skill for using `wiki` to a skills folder, by default [Claude Code's](https://code.claude.com/docs/en/skills) `~/.claude/skills`, or `$CLAUDE_CONFIG_DIR/skills` when that's set. Run it again after moving the repo.
   - `update`: download the latest build of each wiki into `zim/`, and delete older builds.
   - `sources`: regenerate `sources.txt`.
   - `list`

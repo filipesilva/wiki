@@ -6,6 +6,7 @@
 """Download, search and read local ZIM wikis.
 
 wiki install                      add wiki to your PATH, in your shell's config
+wiki skill [dir]                  add a skill for using wiki to a skills folder, by default Claude Code's ~/.claude/skills
 wiki update                       download the latest build of each wiki in wikis.txt, and delete older builds
 wiki sources                      regenerate sources.txt, the Kiwix folder for each ZIM name prefix
 wiki list                         list wikis
@@ -62,6 +63,35 @@ def install():
         with config.open("a") as f:
             f.write(f"\n{line}\n")
         print(f"added to {config}, restart your shell or source it")
+
+
+SKILL = """---
+name: wiki
+description: Search and read local offline wikis, like Wikipedia, Wiktionary, Stack Exchange and devdocs, with the wiki CLI. Use for reference facts, definitions, and library or tool docs, before searching the web.
+---
+
+Local copies of Kiwix wikis, read with the CLI at `WIKI`, written `wiki` below. Run `wiki list` to see which wikis there are.
+
+Articles go by `<wiki>/<path>` refs, e.g. `wikipedia/Ray_Charles`. Pass them on as printed.
+
+- `wiki search <query> [-n N]`: exact title matches first, then ranked full-text hits, 10 by default. Add `in:<prefix>` to the query to search only some wikis, e.g. `in:wikipedia` or `in:devdocs_python`.
+- `wiki outline <ref>`: the article's headings, with the size of each section.
+- `wiki get <ref> [section]`: the article as markdown, or only the section whose heading matches.
+- `wiki refs <ref>`: the articles it links to.
+- `wiki _refs <ref> [-n N]`: the articles that link to it, if the wiki was indexed with `wiki index <wiki>`.
+
+Long articles cost a lot of context, so run `outline` first and `get` the sections you need.
+The wikis are snapshots, so check dates for recent events, and search the web when the wikis don't have it.
+"""
+
+
+def skill(skills=None):
+    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    path = Path(skills).expanduser() / "wiki/SKILL.md" if skills else claude / "skills/wiki/SKILL.md"
+    existed = path.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(SKILL.replace("WIKI", str(Path(__file__).resolve())))
+    print(f"{'updated' if existed else 'added'} {path}")
 
 
 def listing(folder):
@@ -346,6 +376,10 @@ def main(args):
     match args:
         case ["install"]:
             install()
+        case ["skill"]:
+            skill()
+        case ["skill", skills]:
+            skill(skills)
         case ["update"]:
             update()
         case ["sources"]:
