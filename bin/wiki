@@ -23,38 +23,84 @@ from libzim.search import Query, Searcher
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def aliases():
+    """(regex, alias) for each wikis.txt line with a short name in its second column."""
+    path = ROOT / "wikis.txt"
+    rules = []
+    for line in path.read_text().splitlines() if path.exists() else []:
+        if len(parts := line.split()) == 2 and not line.lstrip().startswith("#"):
+            rules.append((re.compile(re.escape(parts[0]).replace(r"\*", "(.*)") + "$"), parts[1]))
+    return rules
+
+
+def short_name(full, rules):
+    for regex, alias in rules:
+        if m := regex.match(full):
+            return alias.replace("*", m[1]) if m.groups() else alias
+    return full
+
+
 def wikis():
-    found = {}
+    """Archives by short name from wikis.txt, or by full name, e.g. wiktionary_en_all_nopic."""
+    rules, found = aliases(), {}
     for p in sorted((ROOT / "zim").glob("*.zim")):
+        name = short_name(p.stem.rsplit("_", 1)[0], rules)
+        if name in found:
+            sys.exit(f"{name} is the short name of {Path(found[name].filename).name} and {p.name}, fix wikis.txt")
         try:
-            found[p.stem.rsplit("_", 1)[0]] = Archive(p)
+            found[name] = Archive(p)
         except RuntimeError as e:
             print(f"skipping {p.name}: {e}", file=sys.stderr)
     return found
 
 
+def lookup(ref):
+    """(wiki, archive, entry) for a <wiki>/<path> ref, with the wiki as a short or full name."""
+    name, path = ref.split("/", 1)
+    found = wikis()
+    if name not in found:
+        name = next((n for n, a in found.items() if Path(a.filename).stem.rsplit("_", 1)[0] == name), None)
+        if name is None:
+            sys.exit(f"no wiki named {ref.split('/', 1)[0]}, see: wiki list")
+    archive = found[name]
+    if not archive.has_entry_by_path(path):
+        sys.exit(f"no article {path} in {name}")
+    return name, archive, resolve(archive.get_entry_by_path(path))
+
+
+def resolve(entry):
+    while entry.is_redirect:
+        entry = entry.get_redirect_entry()
+    return entry
+
+
+def text(fragment):
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", fragment))).strip()
+
+
 def search(query, n):
     words = query.split()
     scopes = [w[3:] for w in words if w.startswith("in:")]
-    text = " ".join(w for w in words if not w.startswith("in:"))
-    scoped = {name: a for name, a in wikis().items() if not scopes or any(name.startswith(s) for s in scopes)}
+    q = " ".join(w for w in words if not w.startswith("in:"))
+    scoped = {
+        name: a for name, a in wikis().items()
+        if not scopes or any(n.startswith(s) for s in scopes for n in (name, Path(a.filename).stem.rsplit("_", 1)[0]))
+    }
     if not scoped:
         sys.exit(f"no wikis match {' '.join('in:' + s for s in scopes)}")
 
     hits = []
     for name, a in scoped.items():
-        for title in dict.fromkeys([text, text[:1].upper() + text[1:], text.lower()]):
+        for title in dict.fromkeys([q, q[:1].upper() + q[1:], q.lower()]):
             if a.has_entry_by_title(title):
-                entry = a.get_entry_by_title(title)
-                while entry.is_redirect:
-                    entry = entry.get_redirect_entry()
+                entry = resolve(a.get_entry_by_title(title))
                 hits.append((name, entry.path, entry.title, "title match"))
                 break
 
     seen = {(name, path) for name, path, _, _ in hits}
     names = {a.filename: name for name, a in scoped.items() if a.has_fulltext_index}
     if names:
-        results = Searcher(*(scoped[name] for name in names.values())).search(Query().set_query(text))
+        results = Searcher(*(scoped[name] for name in names.values())).search(Query().set_query(q))
         start = 0
         while len(hits) < n and (batch := list(results.get_results(start, n))):
             start += len(batch)
@@ -63,18 +109,14 @@ def search(query, n):
                 if r.path.startswith("Category:") or key in seen or len(hits) == n:
                     continue
                 seen.add(key)
-                snippet = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", r.snippet))).strip()
-                hits.append((*key, r.title, snippet))
+                hits.append((*key, r.title, text(r.snippet)))
 
     for name, path, title, snippet in hits[:n]:
         print(f"{name}/{path}  {title}\n  {snippet}")
 
 
 def markdown(ref):
-    name, path = ref.split("/", 1)
-    entry = wikis()[name].get_entry_by_path(path)
-    while entry.is_redirect:
-        entry = entry.get_redirect_entry()
+    _, _, entry = lookup(ref)
     return subprocess.run(
         ["pandoc", "-f", "html", "-t", "gfm-raw_html", "--wrap=none", f"--lua-filter={ROOT / 'lib/strip.lua'}"],
         input=bytes(entry.get_item().content), capture_output=True, check=True,
@@ -106,9 +148,8 @@ def get(ref, section=None):
         print(md)
         return
     lines = md.splitlines()
-    found = list(sections(lines))
     want = section.lower()
-    candidates = [s for s in found if want in s[3].lower()]
+    candidates = [s for s in sections(lines) if want in s[3].lower()]
     match = min(candidates, key=lambda s: (s[3].lower() != want, not s[3].lower().startswith(want), len(s[3])), default=None)
     if match is None:
         sys.exit(f"no section matching {section!r}, see: wiki outline {ref}")
@@ -119,7 +160,7 @@ def main(args):
     match args:
         case ["list"]:
             for name, archive in wikis().items():
-                print(f"{name}  {archive.entry_count} entries")
+                print(f"{name}  {archive.entry_count:,} entries  {Path(archive.filename).name}")
         case ["search", *rest] if rest:
             n = 10
             if "-n" in rest:
