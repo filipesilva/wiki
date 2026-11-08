@@ -30,19 +30,13 @@ import re
 import resource
 import signal
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import traceback
-import urllib.request
 from pathlib import Path
 from urllib.parse import quote, unquote
-
-import html_to_markdown
-from libzim.reader import Archive
-from libzim.search import Query, Searcher
 
 ROOT = Path(__file__).resolve().parent.parent
 KIWIX = "https://download.kiwix.org/zim"
@@ -102,6 +96,8 @@ def skill(skills=None):
 
 
 def listing(folder):
+    import urllib.request
+
     with urllib.request.urlopen(f"{KIWIX}/{folder}/", timeout=60) as r:
         return re.findall(r'href="([^"/?]+\.zim)"', r.read().decode())
 
@@ -187,6 +183,8 @@ ARCHIVES = {}
 def open_archive(path):
     """The archive, kept open for later calls, or None with a warning when the file can't be read."""
     if path not in ARCHIVES:
+        from libzim.reader import Archive
+
         try:
             ARCHIVES[path] = Archive(path)
         except RuntimeError as e:
@@ -236,6 +234,8 @@ def first_sentence(entry):
 
 
 def search(query, n):
+    from libzim.search import Query, Searcher
+
     words = query.split()
     scopes = [w[3:] for w in words if w.startswith("in:")]
     q = " ".join(w for w in words if not w.startswith("in:"))
@@ -249,6 +249,8 @@ def search(query, n):
 
     hits = []
     for name, a in scoped.items():
+        if len(hits) == n:
+            break
         for title in dict.fromkeys([q, q[:1].upper() + q[1:], q.lower()]):
             if a.has_entry_by_title(title):
                 entry = resolve(a.get_entry_by_title(title))
@@ -257,7 +259,7 @@ def search(query, n):
 
     seen = {(name, path) for name, path, _, _ in hits}
     names = {a.filename: name for name, a in scoped.items() if a.has_fulltext_index}
-    if names:
+    if names and len(hits) < n:
         results = Searcher(*(scoped[name] for name in names.values())).search(Query().set_query(q))
         start = 0
         while len(hits) < n and (batch := list(results.get_results(start, n))):
@@ -274,6 +276,8 @@ def search(query, n):
 
 
 def markdown(ref):
+    import html_to_markdown
+
     _, _, entry = lookup(ref)
     options = html_to_markdown.ConversionOptions(strip_tags=["a"], skip_images=True, compact_tables=True, extract_metadata=False)
     return html_to_markdown.convert(bytes(entry.get_item().content).decode(errors="ignore"), options).content
@@ -315,17 +319,22 @@ def get(ref, section=None):
 def targets(archive, entry):
     """The articles an entry links to, in page order."""
     base = posixpath.dirname(entry.path)
-    found = {}
+    seen, found = set(), {}
     for href in re.findall(r'href="([^"]+)"', bytes(entry.get_item().content).decode(errors="ignore")):
         href = unquote(html.unescape(href).split("#")[0].split("?")[0])
         if not href or href.startswith("/") or re.match(r"[a-z][a-z0-9+.-]*:", href):
             continue
         path = posixpath.normpath(posixpath.join(base, href))
-        if path in found or not archive.has_entry_by_path(path):
+        if path in seen:
             continue
-        target = resolve(archive.get_entry_by_path(path))
-        found[path] = target if target.path != entry.path and target.get_item().mimetype.startswith("text/html") else None
-    return list({t.path: t for t in found.values() if t}.values())
+        seen.add(path)
+        try:
+            target = resolve(archive.get_entry_by_path(path))
+        except KeyError:
+            continue
+        if target.path != entry.path and target.get_item().mimetype.startswith("text/html"):
+            found.setdefault(target.path, target)
+    return list(found.values())
 
 
 def refs(ref):
@@ -339,6 +348,8 @@ def index_path(archive):
 
 
 def index(wiki):
+    import sqlite3
+
     _, archive = find(wiki)
     path = index_path(archive)
     tmp = path.with_suffix(".tmp")
@@ -361,6 +372,8 @@ def index(wiki):
 
 
 def backrefs(ref, n):
+    import sqlite3
+
     name, archive, entry = lookup(ref)
     path = index_path(archive)
     if not path.exists():
