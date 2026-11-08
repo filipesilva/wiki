@@ -17,6 +17,7 @@ wiki index <wiki>                 build the index for _refs
 import html
 import posixpath
 import re
+import resource
 import signal
 import sqlite3
 import subprocess
@@ -48,29 +49,38 @@ def short_name(full, rules):
     return full
 
 
+def full_name(path):
+    return path.stem.rsplit("_", 1)[0]
+
+
 def wikis():
-    """Archives by short name from wikis.txt, or by full name, e.g. wiktionary_en_all_nopic."""
+    """ZIM paths by short name from wikis.txt, or by full name, e.g. wiktionary_en_all_nopic."""
     rules, found = aliases(), {}
     for p in sorted((ROOT / "zim").glob("*.zim")):
-        name = short_name(p.stem.rsplit("_", 1)[0], rules)
+        name = short_name(full_name(p), rules)
         if name in found:
-            sys.exit(f"{name} is the short name of {Path(found[name].filename).name} and {p.name}, fix wikis.txt")
-        try:
-            found[name] = Archive(p)
-        except RuntimeError as e:
-            print(f"skipping {p.name}: {e}", file=sys.stderr)
+            sys.exit(f"{name} is the short name of {found[name].name} and {p.name}, fix wikis.txt")
+        found[name] = p
     return found
+
+
+def open_archive(path):
+    """The archive, or None with a warning when the file can't be read."""
+    try:
+        return Archive(path)
+    except RuntimeError as e:
+        print(f"can't read {path.name}: {e}", file=sys.stderr)
 
 
 def find(wiki):
     """(name, archive) for a wiki's short or full name."""
     found = wikis()
-    if wiki in found:
-        return wiki, found[wiki]
-    for name, archive in found.items():
-        if Path(archive.filename).stem.rsplit("_", 1)[0] == wiki:
-            return name, archive
-    sys.exit(f"no wiki named {wiki}, see: wiki list")
+    name = wiki if wiki in found else next((n for n, p in found.items() if full_name(p) == wiki), None)
+    if name is None:
+        sys.exit(f"no wiki named {wiki}, see: wiki list")
+    if (archive := open_archive(found[name])) is None:
+        sys.exit(1)
+    return name, archive
 
 
 def lookup(ref):
@@ -104,12 +114,13 @@ def search(query, n):
     words = query.split()
     scopes = [w[3:] for w in words if w.startswith("in:")]
     q = " ".join(w for w in words if not w.startswith("in:"))
-    scoped = {
-        name: a for name, a in wikis().items()
-        if not scopes or any(n.startswith(s) for s in scopes for n in (name, Path(a.filename).stem.rsplit("_", 1)[0]))
+    paths = {
+        name: p for name, p in wikis().items()
+        if not scopes or any(n.startswith(s) for s in scopes for n in (name, full_name(p)))
     }
-    if not scoped:
+    if not paths:
         sys.exit(f"no wikis match {' '.join('in:' + s for s in scopes)}")
+    scoped = {name: a for name, p in paths.items() if (a := open_archive(p))}
 
     hits = []
     for name, a in scoped.items():
@@ -256,8 +267,10 @@ def main(args):
         args = args[:i] + args[i + 2:]
     match args:
         case ["list"]:
-            for name, archive in wikis().items():
-                print(f"{name}  {archive.entry_count:,} entries  {Path(archive.filename).name}")
+            for name, path in wikis().items():
+                if archive := open_archive(path):
+                    print(f"{name}  {archive.entry_count:,} entries  {path.name}")
+                    del archive
         case ["search", *rest] if rest:
             search(" ".join(rest), n or 10)
         case ["outline", ref]:
@@ -279,4 +292,7 @@ def main(args):
 
 
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+# search keeps every wiki open, and macOS shells default to 256 open files
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, min(hard, 10240)), hard))
 main(sys.argv[1:])
