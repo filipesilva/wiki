@@ -9,7 +9,7 @@ Needs [uv](https://docs.astral.sh/uv/) and [pandoc](https://pandoc.org).
 - `bin/update`: downloads the latest build of each wiki into `zim/`, and deletes older builds.
 - `bin/wiki`: read the wikis, for people and agents.
   - `list`
-  - `search <query> [-n N]`: one ranked search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_en_clojure`.
+  - `search <query> [-n N]`: exact title matches first, then one ranked full-text search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_en_clojure`.
   - `outline <wiki>/<path>`: the article's headings, with the size of each section.
   - `get <wiki>/<path> [section]`: the article, or one section of it, as markdown.
 
