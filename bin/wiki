@@ -581,7 +581,9 @@ def open_in_kiwix(ref):
 
 def main(args):
     n = None
-    if "-n" in args and (i := args.index("-n")) + 1 < len(args) and args[i + 1].isdigit():
+    numbered = [i for i, a in enumerate(args[:-1]) if a == "-n" and args[i + 1].isdigit()]
+    if numbered:
+        i = numbered[-1]
         n = int(args[i + 1])
         args = args[:i] + args[i + 2:]
     match args:
