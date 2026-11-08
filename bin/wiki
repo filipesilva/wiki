@@ -4,6 +4,7 @@
 # ///
 """Download, search and read local ZIM wikis.
 
+wiki install                      add wiki to your PATH, in your shell's config
 wiki update                       download the latest build of each wiki in wikis.txt, and delete older builds
 wiki sources                      regenerate sources.txt, the Kiwix folder for each ZIM name prefix
 wiki list                         list wikis
@@ -17,6 +18,7 @@ wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them 
 wiki index <wiki>                 build the index for _refs
 """
 import html
+import os
 import posixpath
 import re
 import resource
@@ -39,6 +41,26 @@ KIWIX = "https://download.kiwix.org/zim"
 FOLDERS = ["wikipedia", "wiktionary", "wikibooks", "wikiquote", "wikivoyage", "wikisource", "wikiversity", "gutenberg",
            "stack_exchange", "devdocs", "freecodecamp", "ifixit", "libretexts", "other", "ted", "mooc", "phet", "zimit",
            "vikidia", "videos"]
+
+
+def install():
+    bin_dir = Path(__file__).resolve().parent
+    configs = {
+        "bash": (Path.home() / ".bashrc", f'export PATH="{bin_dir}:$PATH"'),
+        "zsh": (Path.home() / ".zshrc", f'export PATH="{bin_dir}:$PATH"'),
+        "fish": (Path.home() / ".config/fish/config.fish", f"fish_add_path {bin_dir}"),
+    }
+    shell = Path(os.environ.get("SHELL", "")).name
+    if shell not in configs:
+        sys.exit(f"unsupported shell: {shell or 'unknown'}")
+    config, line = configs[shell]
+    if config.exists() and line in config.read_text():
+        print(f"already in {config}")
+    else:
+        config.parent.mkdir(parents=True, exist_ok=True)
+        with config.open("a") as f:
+            f.write(f"\n{line}\n")
+        print(f"added to {config}, restart your shell or source it")
 
 
 def listing(folder):
@@ -321,6 +343,8 @@ def main(args):
         n = int(args[i + 1])
         args = args[:i] + args[i + 2:]
     match args:
+        case ["install"]:
+            install()
         case ["update"]:
             update()
         case ["sources"]:
