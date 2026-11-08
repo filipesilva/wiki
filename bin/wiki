@@ -79,7 +79,7 @@ description: Search and read local offline wikis, like Wikipedia, Wiktionary, St
 
 Local copies of Kiwix wikis, read with the CLI at `WIKI`, written `wiki` below. Run `wiki list` to see which wikis there are.
 
-Articles go by `<wiki>/<path>` refs, e.g. `wikipedia/Ray_Charles`. Pass them on as printed.
+Articles go by `<wiki>/<path>` refs, e.g. `wikipedia/Ray_Charles`. Pass them on as printed, in single quotes, since paths can have `( ) ' &`, e.g. `wiki outline 'wikipedia/Python_(programming_language)'`.
 
 - `wiki search <query> [-n N]`: exact title matches first, then ranked full-text hits, 10 by default. Add `in:<prefix>` to the query to search only some wikis, e.g. `in:wikipedia` or `in:devdocs_python`.
 - `wiki outline <ref>`: the article's headings, with the size of each section.
