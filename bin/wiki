@@ -110,11 +110,22 @@ def sources():
     print(f"{len(lines) - 1} prefixes in sources.txt")
 
 
-def update():
+def manifest():
+    """The columns of each wikis.txt line, skipping blanks and comments."""
     path = ROOT / "wikis.txt"
-    if not path.exists():
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [line.split() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+
+
+def pattern_re(pattern):
+    """A wikis.txt name pattern as a regex, with * as a group."""
+    return re.escape(pattern).replace(r"\*", "(.*)")
+
+
+def update():
+    if not (ROOT / "wikis.txt").exists():
         sys.exit("no wikis.txt, start with: cp wikis.example.txt wikis.txt")
-    patterns = [line.split()[0] for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    patterns = [columns[0] for columns in manifest()]
     folders = dict(line.split() for line in (ROOT / "sources.txt").read_text().splitlines() if not line.startswith("#"))
     zim, listings = ROOT / "zim", {}
     zim.mkdir(exist_ok=True)
@@ -123,8 +134,8 @@ def update():
             sys.exit(f"no Kiwix folder for {pattern} in sources.txt")
         if folder not in listings:
             listings[folder] = listing(folder)
-        regex = re.compile(re.escape(pattern).replace(r"\*", ".*") + r"_\d{4}-\d{2}\.zim")
-        latest = {f.rsplit("_", 1)[0]: f for f in sorted(listings[folder]) if regex.fullmatch(f)}
+        regex = re.compile(pattern_re(pattern) + r"_\d{4}-\d{2}\.zim")
+        latest = {full_name(Path(f)): f for f in sorted(listings[folder]) if regex.fullmatch(f)}
         if not latest:
             sys.exit(f"no builds found for {pattern}")
         for base, file in latest.items():
@@ -139,7 +150,7 @@ def update():
             part.rename(target)
             for old in zim.glob(f"{base}_*.zim"):
                 if old != target and full_name(old) == base:
-                    for stale in (old, Path(f"{old}.refs.sqlite")):
+                    for stale in (old, index_path(old)):
                         if stale.exists():
                             stale.unlink()
                             print(f"removed {stale.name}")
@@ -147,12 +158,7 @@ def update():
 
 def aliases():
     """(regex, alias) for each wikis.txt line with a short name in its second column."""
-    path = ROOT / "wikis.txt"
-    rules = []
-    for line in path.read_text().splitlines() if path.exists() else []:
-        if len(parts := line.split()) == 2 and not line.lstrip().startswith("#"):
-            rules.append((re.compile(re.escape(parts[0]).replace(r"\*", "(.*)") + "$"), parts[1]))
-    return rules
+    return [(re.compile(pattern_re(columns[0]) + "$"), columns[1]) for columns in manifest() if len(columns) == 2]
 
 
 def short_name(full, rules):
@@ -343,15 +349,15 @@ def refs(ref):
         print(f"{name}/{t.path}  {t.title}")
 
 
-def index_path(archive):
-    return Path(f"{archive.filename}.refs.sqlite")
+def index_path(zim):
+    return Path(f"{zim}.refs.sqlite")
 
 
 def index(wiki):
     import sqlite3
 
     _, archive = find(wiki)
-    path = index_path(archive)
+    path = index_path(archive.filename)
     tmp = path.with_suffix(".tmp")
     tmp.unlink(missing_ok=True)
     db = sqlite3.connect(tmp)
@@ -375,7 +381,7 @@ def backrefs(ref, n):
     import sqlite3
 
     name, archive, entry = lookup(ref)
-    path = index_path(archive)
+    path = index_path(archive.filename)
     if not path.exists():
         sys.exit(f"no index for {name}, build it with: wiki index {name}")
     db = sqlite3.connect(path)
