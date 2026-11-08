@@ -12,7 +12,16 @@ Needs [uv](https://docs.astral.sh/uv/) and [pandoc](https://pandoc.org).
   - `search <query> [-n N]`: exact title matches first, then one ranked full-text search across all wikis. `in:<prefix>` limits it to wikis whose name starts with the prefix, e.g. `in:devdocs_clojure`.
   - `outline <wiki>/<path>`: the article's headings, with the size of each section.
   - `get <wiki>/<path> [section]`: the article, or one section of it, as markdown.
+  - `open <wiki>[/<path>]`: open the wiki, or an article in it, in the Kiwix app. The wiki must be open in Kiwix for its articles to load.
   - `refs <wiki>/<path>`: the articles it links to.
   - `_refs <wiki>/<path> [-n N]`: the articles that link to it. Needs `index <wiki>` first, which writes a `.refs.sqlite` file next to the ZIM.
 
-The Kiwix desktop app (`brew install --cask kiwix`) can open the same files in `zim/`.
+
+## Reading in Kiwix
+
+The Kiwix app (`brew install --cask kiwix`) reads the files in `zim/` in place.
+Open them with File > Open... (⌘O), one at a time, or with the + button in the library's Opened list, several at a time.
+`bin/wiki open <wiki>` opens one too.
+Once a wiki is open in Kiwix, `bin/wiki open <wiki>/<path>` opens a single article in it, e.g. one you found with `bin/wiki search`.
+
+Kiwix doesn't watch the folder, so after `bin/update` downloads a new build, open the new file and remove the old one.

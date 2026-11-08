@@ -9,6 +9,7 @@ wiki search <query> [-n N]        exact title matches, then ranked full-text sea
                                   in:<prefix> in the query limits it to wikis whose name starts with prefix
 wiki outline <wiki>/<path>        print an article's headings, with the size of each section
 wiki get <wiki>/<path> [section]  print an article, or one section of it, as markdown
+wiki open <wiki>[/<path>]         open the wiki, or an article in it, in the Kiwix app
 wiki refs <wiki>/<path>           print the articles it links to
 wiki _refs <wiki>/<path> [-n N]   print the articles that link to it, N of them (default 50), needs wiki index
 wiki index <wiki>                 build the index for _refs
@@ -22,7 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from libzim.reader import Archive
 from libzim.search import Query, Searcher
@@ -61,15 +62,21 @@ def wikis():
     return found
 
 
-def lookup(ref):
-    """(wiki, archive, entry) for a <wiki>/<path> ref, with the wiki as a short or full name."""
-    name, path = ref.split("/", 1)
+def find(wiki):
+    """(name, archive) for a wiki's short or full name."""
     found = wikis()
-    if name not in found:
-        name = next((n for n, a in found.items() if Path(a.filename).stem.rsplit("_", 1)[0] == name), None)
-        if name is None:
-            sys.exit(f"no wiki named {ref.split('/', 1)[0]}, see: wiki list")
-    archive = found[name]
+    if wiki in found:
+        return wiki, found[wiki]
+    for name, archive in found.items():
+        if Path(archive.filename).stem.rsplit("_", 1)[0] == wiki:
+            return name, archive
+    sys.exit(f"no wiki named {wiki}, see: wiki list")
+
+
+def lookup(ref):
+    """(name, archive, entry) for a <wiki>/<path> ref."""
+    wiki, path = ref.split("/", 1)
+    name, archive = find(wiki)
     if not archive.has_entry_by_path(path):
         sys.exit(f"no article {path} in {name}")
     return name, archive, resolve(archive.get_entry_by_path(path))
@@ -197,11 +204,8 @@ def index_path(archive):
     return Path(f"{archive.filename}.refs.sqlite")
 
 
-def index(name):
-    found = wikis()
-    if name not in found:
-        sys.exit(f"no wiki named {name}, see: wiki list")
-    archive = found[name]
+def index(wiki):
+    _, archive = find(wiki)
     path = index_path(archive)
     tmp = path.with_suffix(".tmp")
     tmp.unlink(missing_ok=True)
@@ -235,6 +239,15 @@ def backrefs(ref, n):
         print(f"{name}/{e.path}  {e.title}")
 
 
+def open_in_kiwix(ref):
+    if "/" in ref:
+        _, archive, entry = lookup(ref)
+        url = f"zim://{archive.uuid}/{quote(entry.path)}"
+    else:
+        url = str(find(ref)[1].filename)
+    subprocess.run(["open", "-a", "Kiwix", url], check=True)
+
+
 def main(args):
     n = None
     if "-n" in args:
@@ -253,6 +266,8 @@ def main(args):
             get(ref)
         case ["get", ref, *section] if section:
             get(ref, " ".join(section))
+        case ["open", ref]:
+            open_in_kiwix(ref)
         case ["refs", ref]:
             refs(ref)
         case ["_refs", ref]:
